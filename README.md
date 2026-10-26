@@ -67,23 +67,22 @@ faster rank higher when everything else is equal.
 
 ## Using it in APTV (Apple TV)
 
-1. **配置 → + → 订阅配置**, then paste the playlist URL:
-   `https://raw.githubusercontent.com/realzza/aptv/main/dist/aptv.m3u`.
-   This only works if the repo is public; see "Hosting" below if it is private. Turn on
-   **自动刷新配置** so APTV picks up the twice-daily refreshes.
+1. **配置 → + → 订阅配置**, then paste the playlist URL (link first, then the name):
+
+   ```
+   https://raw.githubusercontent.com/realzza/aptv/main/dist/aptv.m3u
+   ```
+
+   Turn on **自动刷新配置** so APTV picks up the twice-daily refreshes. For broadcaster-run
+   streams only, use `…/dist/aptv-official.m3u` instead.
 2. The program guide (EPG) loads automatically through `x-tvg-url`
    (`https://live.fanmingming.cn/e.xml`). You can also enter it as the 节目单地址.
-3. *Optional: automatic failover.* Add `aptv-backup.m3u` as a second 订阅配置, then create a
-   **聚合配置** with `aptv` first and `aptv-backup` second. APTV merges channels with the same
-   name and switches to the backup if a stream doesn't start within the timeout (default 5 s,
-   under 设置 → 高级设置 → 播放超时时间).
-
-**Hosting.** APTV needs a URL it can fetch without logging in. If this repo stays private, you
-can either:
-
-- Make the repo public (the raw URL above then just works), or
-- Use a **本地配置**: AirDrop or iCloud the `.m3u` to APTV on your iPhone or Mac. It syncs to the
-  Apple TV through iCloud (requires APTV 高级版), but you lose the automatic refreshes.
+3. *Optional: automatic failover.* Add `…/dist/aptv-backup.m3u` as a second 订阅配置, then
+   create a **聚合配置** with `aptv` first and `aptv-backup` second. APTV merges channels with
+   the same name and switches to the backup if a stream doesn't start within the timeout
+   (default 5 s, under 设置 → 高级设置 → 播放超时时间).
+4. For **湖南卫视 4K**, set 设置 → 首选播放器 to the non-system player (or 自动). The system
+   player shows no picture for HEVC-in-TS streams.
 
 ## All the options I looked at
 
