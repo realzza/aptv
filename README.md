@@ -24,10 +24,10 @@ re-tested twice a day from a US machine, and only working streams are kept.
 
 | Channel | Works? | Best source | Notes |
 |---|---|---|---|
-| **湖南卫视** | ✅ **4K** HEVC | official (芒果TV CDN) | The best 4K channel available abroad |
+| **湖南卫视** | ✅ **4K** HEVC | official (芒果TV CDN) | The best 4K channel abroad, but it needs APTV's non-system player (see below). The main entry uses a 1080p relay |
 | **浙江卫视** + 8 Zhejiang channels | ✅ 1080p | official (中国蓝 CDN) | All of cztv's channels are open overseas |
 | **东方卫视** | ✅ 1080p | official (BesTV) | The "东方卫视4K" feed arrives as 1080p; thin headroom (~1.4×), so it may buffer |
-| **河北卫视** | ✅ **4K** H.264 | official | About 7 Mbps with thin headroom; may stutter |
+| **河北卫视** | ✅ **4K** H.264 | official | About 7 Mbps with thin headroom (~2×). It's in the 4K group; the main entry uses a 1080p relay |
 | **苏州 4K** | ✅ **4K** | official | Plain http only (the https certificate has expired) |
 | **江苏卫视** | ✅ 1080p | third-party relay | No official stream plays outside China |
 | **CCTV-1 … CCTV-17, 5+** | ✅ 720p–1080p | third-party relays | Official CCTV is blocked abroad (see above) |
@@ -48,6 +48,9 @@ sources automatically. If you would rather use only broadcaster-run streams, sub
 
 - Outside China you can get real 4K on **湖南卫视**, **河北卫视** and **苏州 4K**. They are listed
   together in the playlist's `4K 超高清` group.
+- **湖南卫视 4K is HEVC inside MPEG-TS, which Apple's own player (AVPlayer) won't decode:** you get
+  sound but no picture. In APTV, set 设置 → 首选播放器 to the non-system player (or 自动) to watch
+  it. 河北卫视 4K and 苏州 4K are H.264 and play in either player.
 - **CCTV-4K/8K, 北京卫视4K, 广东/深圳 4K and 东方卫视4K at full resolution** are only delivered
   inside China, through operator IPTV multicast or 央视频 with a mainland IP.
 - You need an Apple TV 4K. The Apple TV HD tops out at 1080p and has no hardware HEVC decoding.
@@ -109,8 +112,10 @@ consider them further.
    segment length, and checks the real resolution and codec with `ffprobe`. VOD loops,
    placeholders without video, expired TLS certificates and anything that doesn't decode are
    dropped.
-4. Ranks each channel's sources: smooth (headroom ≥ 1.3×) → resolution → official over relay →
-   faster start. If a channel finds no working source in a run, its sources from the last 3 days
+4. Ranks each channel's sources: plays in Apple's AVPlayer (no HEVC-in-TS, no MP2 audio) →
+   comfortable headroom (≥ 2×, then ≥ 1.3×) → resolution → official over relay → faster start.
+   So each channel's main entry is the one most likely to just work, and 4K streams that are
+   marginal or need the other player engine are still listed in the `4K 超高清` group. If a channel finds no working source in a run, its sources from the last 3 days
    are kept.
    If more than half the channels fail at once (usually the build machine's network), the run
    stops and the previous playlists stay as they are.

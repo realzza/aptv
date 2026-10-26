@@ -16,10 +16,14 @@ SETTINGS = {"uhd_group": "4K 超高清", "uhd_height": 2000, "group_order": ["4K
 
 
 def source(url="http://x/a.m3u8", *, height=1080, official=False, headroom=5.0, startup=1.0,
-           stale=False, last_ok="2026-10-25T00:00:00+00:00"):
+           stale=False, apple=True, last_ok="2026-10-25T00:00:00+00:00"):
     return build.Source(url=url, official=official, width=height * 16 // 9, height=height, codec="h264",
                         bitrate=3.0, headroom=headroom, startup=startup, segment=10, last_ok=last_ok,
-                        stale=stale)
+                        stale=stale, apple=apple)
+
+
+def rank(sources):
+    return [s.url for s in build.rank(sources, min_headroom=1.3, good_headroom=2.0)]
 
 
 class NormTest(unittest.TestCase):
@@ -90,14 +94,24 @@ class RankTest(unittest.TestCase):
         relay_1080 = source("relay1080", startup=0.5)
         official_1080 = source("official1080", official=True, startup=3.0)
         uhd = source("uhd", height=2160)
+        marginal_uhd = source("marginal", height=2160, headroom=1.6)
         choppy_uhd = source("choppy", height=2160, headroom=0.8)
+        hevc_ts_uhd = source("hevc-ts", height=2160, official=True, apple=False)
         stale = source("stale", height=2160, official=True, stale=True)
-        ranked = build.rank([stale, choppy_uhd, relay_1080, official_1080, uhd], min_headroom=1.3)
-        self.assertEqual([s.url for s in ranked], ["uhd", "official1080", "relay1080", "choppy", "stale"])
+        self.assertEqual(
+            rank([stale, hevc_ts_uhd, choppy_uhd, marginal_uhd, relay_1080, official_1080, uhd]),
+            ["uhd", "official1080", "relay1080", "marginal", "choppy", "hevc-ts", "stale"])
 
     def test_faster_start_breaks_ties(self):
-        ranked = build.rank([source("slow", startup=4), source("fast", startup=0.7)], min_headroom=1.3)
-        self.assertEqual(ranked[0].url, "fast")
+        self.assertEqual(rank([source("slow", startup=4), source("fast", startup=0.7)])[0], "fast")
+
+    def test_apple_compatible(self):
+        self.assertTrue(build.apple_compatible("h264", "aac", "mpegts"))
+        self.assertTrue(build.apple_compatible("hevc", "aac", "mov,mp4,m4a,3gp,3g2,mj2"))
+        self.assertTrue(build.apple_compatible("h264", "", "mpegts"))
+        self.assertFalse(build.apple_compatible("hevc", "aac", "mpegts"))
+        self.assertFalse(build.apple_compatible("h264", "mp2", "mpegts"))
+        self.assertFalse(build.apple_compatible("mpeg2video", "aac", "mpegts"))
 
     def test_carry_over_expires(self):
         now = dt.datetime(2026, 10, 26, tzinfo=dt.timezone.utc)
@@ -124,6 +138,13 @@ class PlaylistTest(unittest.TestCase):
         ])
         backup = build.playlist_rows(results, SETTINGS, lambda s: s[1:2])
         self.assertEqual([r[4].url for r in backup], ["cctv1-b", "hunan-hd"])
+
+    def test_4k_channel_prefers_4k_even_when_it_ranks_lower(self):
+        suzhou = build.Channel(name="苏州 4K", tvg="苏州4K", group="4K 超高清")
+        results = [(suzhou, "", [source("hd"), source("uhd", height=2160, headroom=0.9)])]
+        rows = build.playlist_rows(results, SETTINGS, lambda s: s[:2])
+        self.assertEqual([(r[2], r[3], r[4].url) for r in rows],
+                         [("4K 超高清", "苏州 4K", "uhd"), ("4K 超高清", "苏州 4K", "hd")])
 
     def test_render_m3u(self):
         ch = build.Channel(name="浙江卫视", tvg="浙江卫视", group="卫视")
@@ -162,7 +183,8 @@ class ProbeTest(unittest.TestCase):
     def test_live_stream_through_master_playlist(self):
         p = build.probe(f"{self.base}/master.m3u8", timeout=10)
         self.assertTrue(p.ok, p.error)
-        self.assertEqual((p.width, p.height, p.codec), (640, 360, "h264"))
+        self.assertEqual((p.width, p.height, p.codec, p.audio), (640, 360, "h264", ""))
+        self.assertIn("mpegts", p.container)
         self.assertEqual(p.segment, 2)
         self.assertGreater(p.headroom, 1)
 
@@ -178,7 +200,7 @@ class MainTest(unittest.TestCase):
             cfg, out = Path(tmp) / "c.toml", Path(tmp) / "dist"
             cfg.write_text(
                 '[settings]\nepg = ""\nlogo_base = "http://127.0.0.1:9/"\nprobe_timeout = 2\n'
-                'max_candidates = 5\nmin_headroom = 1.3\nuhd_height = 2000\nstale_days = 3\n'
+                'max_candidates = 5\nmin_headroom = 1.3\ngood_headroom = 2.0\nuhd_height = 2000\nstale_days = 3\n'
                 'min_fresh_share = 0.5\ngroup_order = ["g"]\nuhd_group = "4K"\nofficial_hosts = []\n'
                 '[[channels]]\nname = "A"\ntvg = "A"\ngroup = "g"\nurls = ["http://127.0.0.1:9/a.m3u8"]\n',
                 encoding="utf-8")

@@ -140,6 +140,8 @@ class Probe:
     width: int = 0
     height: int = 0
     codec: str = ""
+    audio: str = ""
+    container: str = ""
     bitrate: float = 0.0     # Mbps, from segment sizes and durations
     throughput: float = 0.0  # Mbps, measured download speed
     startup: float = 0.0     # seconds from first request until the first segment arrived
@@ -177,20 +179,38 @@ def _segments(base: str, text: str) -> list[tuple[str, float]]:
     return segs
 
 
-def _ffprobe(target: str, timeout: float) -> tuple[int, int, str]:
-    cmd = ["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
-           "stream=codec_name,width,height", "-of", "json"]
+def _ffprobe(target: str, timeout: float) -> dict:
+    """Video size/codec, first audio codec and container of a local segment or a stream URL."""
+    cmd = ["ffprobe", "-v", "error", "-show_entries",
+           "stream=codec_type,codec_name,width,height:format=format_name", "-of", "json"]
     if "://" in target:
         cmd += ["-rw_timeout", str(int(timeout * 1e6)), "-user_agent", USER_AGENT]
     try:
         out = subprocess.run(cmd + [target], capture_output=True, text=True, timeout=timeout * 2)
-    except subprocess.TimeoutExpired:
-        return 0, 0, ""
-    streams = json.loads(out.stdout or "{}").get("streams") or []
-    if not streams:
-        return 0, 0, ""
-    s = max(streams, key=lambda s: s.get("height") or 0)
-    return s.get("width") or 0, s.get("height") or 0, s.get("codec_name") or ""
+        info = json.loads(out.stdout or "{}")
+    except (subprocess.TimeoutExpired, json.JSONDecodeError):
+        return {}
+    streams = info.get("streams") or []
+    video = [s for s in streams if s.get("codec_type") == "video" and s.get("height")]
+    if not video:
+        return {}
+    v = max(video, key=lambda s: s["height"])
+    audio = next((s.get("codec_name", "") for s in streams if s.get("codec_type") == "audio"), "")
+    return {"width": v.get("width") or 0, "height": v["height"], "codec": v.get("codec_name") or "",
+            "audio": audio, "container": (info.get("format") or {}).get("format_name", "")}
+
+
+# What AVPlayer (APTV's 系统播放器 on tvOS) decodes in HLS. Notably not HEVC inside MPEG-TS
+# (Apple only accepts HEVC in fMP4) and not MP2 audio, both common in Chinese IPTV feeds.
+APPLE_AUDIO = {"", "aac", "ac3", "eac3", "mp3", "alac", "flac"}
+
+
+def apple_compatible(codec: str, audio: str, container: str) -> bool:
+    if codec not in ("h264", "hevc"):
+        return False
+    if codec == "hevc" and "mpegts" in container:
+        return False
+    return audio in APPLE_AUDIO
 
 
 def probe(url: str, timeout: float) -> Probe:
@@ -231,11 +251,13 @@ def probe(url: str, timeout: float) -> Probe:
         with tempfile.NamedTemporaryFile(suffix=".seg") as f:
             f.write(init + data)
             f.flush()
-            p.width, p.height, p.codec = _ffprobe(f.name, timeout)
-        if not p.height:  # encrypted or unusual container: let ffprobe walk the playlist itself
-            p.width, p.height, p.codec = _ffprobe(url, timeout)
-        if not p.height:
+            info = _ffprobe(f.name, timeout)
+        if not info:  # encrypted or unusual container: let ffprobe walk the playlist itself
+            info = _ffprobe(url, timeout)
+        if not info:
             raise ProbeError("no decodable video")
+        for key, value in info.items():
+            setattr(p, key, value)
         p.ok = True
     except ProbeError as e:
         p.error = str(e)
@@ -270,13 +292,21 @@ class Source:
     segment: float
     last_ok: str
     stale: bool = False
+    audio: str = ""
+    container: str = ""
+    apple: bool = True       # plays in AVPlayer, APTV's system player
 
 
-def rank(sources: list[Source], min_headroom: float) -> list[Source]:
-    """Smooth playback first, then resolution (4K wins), then broadcaster-run over relays, then zap speed."""
+def rank(sources: list[Source], min_headroom: float, good_headroom: float) -> list[Source]:
+    """Fresh, Apple-playable and reliably fast first; then resolution, broadcaster-run over relays, zap speed.
+
+    Reliability outranks resolution so a channel's main entry just works; 4K sources that are
+    marginal or need APTV's other player engine still get listed in the 4K group.
+    """
     return sorted(sources, key=lambda s: (
         not s.stale,
-        s.headroom >= min_headroom,
+        s.apple,
+        (s.headroom >= good_headroom) + (s.headroom >= min_headroom),
         min(s.height, 2160),
         s.official,
         -s.startup,
@@ -317,7 +347,10 @@ def playlist_rows(results: list[tuple[Channel, str, list[Source]]], settings: di
     rows = []
     for ch, logo, sources in results:
         uhd = [s for s in sources if s.height >= uhd_height]
-        if uhd and ch.group != uhd_group:
+        if ch.group == uhd_group:  # a 4K channel: 4K sources first even if they rank lower
+            rows += [(ch, logo, ch.group, ch.name, s) for s in pick(uhd + [s for s in sources if s not in uhd])]
+            continue
+        if uhd:
             title = ch.name if "4K" in ch.name.upper() else f"{ch.name} 4K"
             rows += [(ch, logo, uhd_group, title, s) for s in pick(uhd)]
         rows += [(ch, logo, ch.group, ch.name, s) for s in pick(sources)]
@@ -333,21 +366,24 @@ def render_report(results, generated: str, counts: dict) -> str:
         f"Probed {counts['probed']} candidate URLs; {counts['ok']} played.",
         "",
         "Latency ≈ 3 × segment length behind live. Headroom = download speed ÷ stream bitrate "
-        "(≥ 1.3 plays smoothly). *Official* = served by the broadcaster's own CDN.",
+        "(≥ 1.3 plays, ≥ 2 comfortably). *Official* = served by the broadcaster's own CDN. "
+        "*Apple* = plays in APTV's 系统播放器 (AVPlayer); ✗ needs APTV's other player engine.",
         "",
-        "| Channel | Group | Best source | Codec | Headroom | Segment | Start | Source | Backups |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Channel | Group | Best source | Codec | Apple | Headroom | Segment | Start | Source | Backups |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for ch, _, sources in results:
         if not sources:
-            out.append(f"| {ch.name} | {ch.group} | ❌ nothing plays | | | | | | |")
+            out.append(f"| {ch.name} | {ch.group} | ❌ nothing plays | | | | | | | |")
             continue
         s = sources[0]
         kind = "official" if s.official else "relay"
         if s.stale:
             kind += " (stale)"
         host = urllib.parse.urlsplit(s.url).hostname
-        out.append(f"| {ch.name} | {ch.group} | {s.width}×{s.height} | {s.codec} | {s.headroom:.1f}× "
+        codec = f"{s.codec}/{s.audio}" if s.audio else s.codec
+        out.append(f"| {ch.name} | {ch.group} | {s.width}×{s.height} | {codec} | {'✓' if s.apple else '✗'} "
+                   f"| {s.headroom:.1f}× "
                    f"| {s.segment:.0f}s | {s.startup:.1f}s | {kind} `{host}` | {len(sources) - 1} |")
     return "\n".join(out) + "\n"
 
@@ -425,13 +461,14 @@ def main(argv: list[str] | None = None) -> int:
         sources = [
             Source(url=p.url, official=is_official(p.url, settings["official_hosts"]), width=p.width,
                    height=p.height, codec=p.codec, bitrate=round(p.bitrate, 2), headroom=round(p.headroom, 1),
-                   startup=round(p.startup, 2), segment=p.segment, last_ok=now.isoformat())
+                   startup=round(p.startup, 2), segment=p.segment, last_ok=now.isoformat(), audio=p.audio,
+                   container=p.container, apple=apple_compatible(p.codec, p.audio, p.container))
             for p in (probes[u] for u in candidates[ch.name]) if p.ok
         ]
         if not sources:
             sources = carry_over(previous.get(ch.name, []), now, settings["stale_days"])
         logo = logos.get(ch.name) or upstream_logo.get(ch.name, "")
-        results.append((ch, logo, rank(sources, settings["min_headroom"])))
+        results.append((ch, logo, rank(sources, settings["min_headroom"], settings["good_headroom"])))
 
     generated = now.strftime("%Y-%m-%d %H:%M UTC")
     counts = {"probed": len(urls), "ok": ok_count}
