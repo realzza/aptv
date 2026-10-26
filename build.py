@@ -228,10 +228,17 @@ def apple_compatible(codec: str, audio: str, container: str) -> bool:
 
 # Query parameters that usually mean a URL expires or is tied to one session.
 _EPHEMERAL = re.compile(r"(?:^|&)(?:token|expires?|exp|sig|signature|hdnts|hdnea|auth|session|sid|st|e)=", re.I)
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 
 
 def _stable_variant(url: str, variant: str, timeout: float) -> str:
-    """The variant URL if a fresh master fetch hands out the same one and it carries no session token."""
+    """The variant URL if a fresh master fetch hands out the same one and it carries no session token.
+
+    A UUID in the variant that the master URL doesn't have is a session id (wurl hands out one per
+    master request; some regions reuse it for a while, which would make it look stable here).
+    """
+    if set(_UUID.findall(variant)) - set(_UUID.findall(url)):
+        return ""
     try:
         final, body = fetch(url, timeout, MAX_PLAYLIST_BYTES)
         again = _best_variant(final, body.decode("utf-8", "replace"))
@@ -523,10 +530,12 @@ def main(argv: list[str] | None = None) -> int:
         matched = 0
         for e in entries:
             ch = by_key.get(norm(e.name))
-            if ch and usable_url(e.url) and e.url not in candidates[ch.name]:
+            if not ch:
+                continue
+            if e.logo:  # even when the URL is one we pinned ourselves
+                upstream_logo.setdefault(ch.name, e.logo)
+            if usable_url(e.url) and e.url not in candidates[ch.name]:
                 candidates[ch.name].append(e.url)
-                if e.logo:
-                    upstream_logo.setdefault(ch.name, e.logo)
                 matched += 1
         print(f"  upstream {up['name']}: {len(entries)} entries, {matched} new candidates", file=sys.stderr)
     for name in candidates:
