@@ -1,0 +1,492 @@
+# Channel catalog for build.py.
+#
+# Each channel collects candidate URLs from `urls` (pinned) plus every upstream playlist entry
+# whose normalized name matches the channel's name, tvg or aliases. `en` adds the English names
+# iptv-org uses ("Zhejiang Satellite TV", "Zhejiang TV"). Every candidate is probed from wherever
+# the build runs, and only streams that actually play are written to dist/.
+
+[settings]
+epg = "https://live.fanmingming.cn/e.xml"
+logo_base = "https://live.fanmingming.cn/tv/"
+probe_timeout = 12        # seconds per HTTP request
+max_candidates = 40       # per channel, pinned URLs first
+min_headroom = 1.3        # download speed / stream bitrate needed to keep up at all
+good_headroom = 2.0       # ...and to keep up comfortably; ranks above resolution
+uhd_height = 2000         # sources at least this tall are also listed under the 4K group
+stale_days = 3            # keep last-known-good sources this long when a channel stops probing
+min_fresh_share = 0.5     # refuse to overwrite dist/ if fewer channels than this probe OK
+group_order = ["4K 超高清", "央视", "卫视", "浙江", "CGTN"]
+uhd_group = "4K 超高清"
+
+# Hosts run by the broadcasters themselves (or their own CDNs). Anything else is a third-party relay.
+official_hosts = [
+  "cztv.com", "cztvcloud.com",          # 浙江广电 / 中国蓝
+  "mgtv.com",                           # 湖南广电 / 芒果TV
+  "bestv.cn",                           # 东方明珠 BesTV (SMG)
+  "hebtv.com",                          # 河北广电
+  "kan0512.com",                        # 苏州广电
+  "nmtv.cn",                            # 内蒙古广电
+  "xntv.tv",                            # 西宁 / 安多卫视
+  "jstv.com",                           # 江苏广电
+  "btime.com", "brtn.cn",               # 北京广电
+  "sztv.com.cn",                        # 深圳广电
+  "gdtv.cn",                            # 广东广电
+  "iqilu.com",                          # 山东广电
+  "cntv.cn", "cctv.com", "cctv.cn", "yangshipin.cn", "cctvplus.com",
+  "cgtn.com", "*cgtn*",
+]
+
+[[upstreams]]
+name = "iptv-org / China"
+url = "https://iptv-org.github.io/iptv/countries/cn.m3u"
+
+[[upstreams]]
+name = "iptv-org / Chinese language"
+url = "https://iptv-org.github.io/iptv/languages/zho.m3u"
+
+[[upstreams]]
+name = "Guovin/iptv-api"
+url = "https://raw.githubusercontent.com/Guovin/iptv-api/gd/output/result.m3u"
+
+[[upstreams]]
+name = "vbskycn/iptv"
+url = "https://raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.m3u"
+
+# ---------------------------------------------------------------- 央视
+[[channels]]
+name = "CCTV-1 综合"
+tvg = "CCTV1"
+group = "央视"
+aliases = ["CCTV01"]
+
+[[channels]]
+name = "CCTV-2 财经"
+tvg = "CCTV2"
+group = "央视"
+
+[[channels]]
+name = "CCTV-3 综艺"
+tvg = "CCTV3"
+group = "央视"
+
+[[channels]]
+name = "CCTV-4 中文国际"
+tvg = "CCTV4"
+group = "央视"
+aliases = ["CCTV4亚洲"]
+
+[[channels]]
+name = "CCTV-4 美洲"
+tvg = "CCTV4美洲"
+group = "央视"
+aliases = ["CCTV4AMERICA", "CCTV4AMERICAS", "CCTV4中文国际美洲"]
+
+[[channels]]
+name = "CCTV-4 欧洲"
+tvg = "CCTV4欧洲"
+group = "央视"
+aliases = ["CCTV4EUROPE", "CCTV4中文国际欧洲"]
+
+[[channels]]
+name = "CCTV-5 体育"
+tvg = "CCTV5"
+group = "央视"
+
+[[channels]]
+name = "CCTV-5+ 体育赛事"
+tvg = "CCTV5+"
+group = "央视"
+aliases = ["CCTV5PLUS", "CCTV5+赛事"]
+
+[[channels]]
+name = "CCTV-6 电影"
+tvg = "CCTV6"
+group = "央视"
+
+[[channels]]
+name = "CCTV-7 国防军事"
+tvg = "CCTV7"
+group = "央视"
+aliases = ["CCTV7军事"]
+
+[[channels]]
+name = "CCTV-8 电视剧"
+tvg = "CCTV8"
+group = "央视"
+
+[[channels]]
+name = "CCTV-9 纪录"
+tvg = "CCTV9"
+group = "央视"
+aliases = ["CCTV9记录"]
+
+[[channels]]
+name = "CCTV-10 科教"
+tvg = "CCTV10"
+group = "央视"
+
+[[channels]]
+name = "CCTV-11 戏曲"
+tvg = "CCTV11"
+group = "央视"
+
+[[channels]]
+name = "CCTV-12 社会与法"
+tvg = "CCTV12"
+group = "央视"
+
+[[channels]]
+name = "CCTV-13 新闻"
+tvg = "CCTV13"
+group = "央视"
+
+[[channels]]
+name = "CCTV-14 少儿"
+tvg = "CCTV14"
+group = "央视"
+
+[[channels]]
+name = "CCTV-15 音乐"
+tvg = "CCTV15"
+group = "央视"
+
+[[channels]]
+name = "CCTV-16 奥林匹克"
+tvg = "CCTV16"
+group = "央视"
+
+[[channels]]
+name = "CCTV-17 农业农村"
+tvg = "CCTV17"
+group = "央视"
+
+[[channels]]
+name = "CCTV-4K 超高清"
+tvg = "CCTV4K"
+group = "央视"
+
+[[channels]]
+name = "CCTV-8K 超高清"
+tvg = "CCTV8K"
+group = "央视"
+
+# ---------------------------------------------------------------- 卫视
+[[channels]]
+name = "浙江卫视"
+tvg = "浙江卫视"
+group = "卫视"
+en = "Zhejiang"
+urls = ["https://ali-m-l.cztv.com/channels/lantian/channel01/1080p.m3u8"]
+
+[[channels]]
+name = "江苏卫视"
+tvg = "江苏卫视"
+group = "卫视"
+en = "Jiangsu"
+aliases = ["江苏卫视4K"]
+
+[[channels]]
+name = "湖南卫视"
+tvg = "湖南卫视"
+group = "卫视"
+en = "Hunan"
+aliases = ["湖南卫视4K"]
+
+[[channels]]
+name = "东方卫视"
+tvg = "东方卫视"
+group = "卫视"
+en = "Dragon"
+aliases = ["东方卫视4K", "SHANGHAIDRAGONTV", "上海东方卫视"]
+urls = ["http://bp-resource-dfl.bestv.cn/148/3/video.m3u8"]
+
+[[channels]]
+name = "北京卫视"
+tvg = "北京卫视"
+group = "卫视"
+en = "Beijing"
+aliases = ["北京卫视4K", "BTV", "BTV1"]
+
+[[channels]]
+name = "广东卫视"
+tvg = "广东卫视"
+group = "卫视"
+en = "Guangdong"
+
+[[channels]]
+name = "深圳卫视"
+tvg = "深圳卫视"
+group = "卫视"
+en = "Shenzhen"
+aliases = ["深圳卫视4K"]
+
+[[channels]]
+name = "山东卫视"
+tvg = "山东卫视"
+group = "卫视"
+en = "Shandong"
+
+[[channels]]
+name = "安徽卫视"
+tvg = "安徽卫视"
+group = "卫视"
+en = "Anhui"
+
+[[channels]]
+name = "天津卫视"
+tvg = "天津卫视"
+group = "卫视"
+en = "Tianjin"
+
+[[channels]]
+name = "重庆卫视"
+tvg = "重庆卫视"
+group = "卫视"
+en = "Chongqing"
+
+[[channels]]
+name = "四川卫视"
+tvg = "四川卫视"
+group = "卫视"
+en = "Sichuan"
+
+[[channels]]
+name = "湖北卫视"
+tvg = "湖北卫视"
+group = "卫视"
+en = "Hubei"
+
+[[channels]]
+name = "河南卫视"
+tvg = "河南卫视"
+group = "卫视"
+en = "Henan"
+
+[[channels]]
+name = "河北卫视"
+tvg = "河北卫视"
+group = "卫视"
+en = "Hebei"
+aliases = ["河北卫视4K"]
+urls = ["https://event.pull.hebtv.com/live/live101.m3u8"]
+
+[[channels]]
+name = "江西卫视"
+tvg = "江西卫视"
+group = "卫视"
+en = "Jiangxi"
+
+[[channels]]
+name = "东南卫视"
+tvg = "东南卫视"
+group = "卫视"
+en = "Southeast"
+aliases = ["FUJIANSOUTHEASTTV", "福建东南卫视"]
+
+[[channels]]
+name = "辽宁卫视"
+tvg = "辽宁卫视"
+group = "卫视"
+en = "Liaoning"
+
+[[channels]]
+name = "黑龙江卫视"
+tvg = "黑龙江卫视"
+group = "卫视"
+en = "Heilongjiang"
+
+[[channels]]
+name = "吉林卫视"
+tvg = "吉林卫视"
+group = "卫视"
+en = "Jilin"
+
+[[channels]]
+name = "广西卫视"
+tvg = "广西卫视"
+group = "卫视"
+en = "Guangxi"
+
+[[channels]]
+name = "云南卫视"
+tvg = "云南卫视"
+group = "卫视"
+en = "Yunnan"
+
+[[channels]]
+name = "贵州卫视"
+tvg = "贵州卫视"
+group = "卫视"
+en = "Guizhou"
+
+[[channels]]
+name = "海南卫视"
+tvg = "海南卫视"
+group = "卫视"
+en = "Hainan"
+aliases = ["旅游卫视"]
+
+[[channels]]
+name = "山西卫视"
+tvg = "山西卫视"
+group = "卫视"
+en = "Shanxi"
+
+[[channels]]
+name = "陕西卫视"
+tvg = "陕西卫视"
+group = "卫视"
+en = "Shaanxi"
+
+[[channels]]
+name = "甘肃卫视"
+tvg = "甘肃卫视"
+group = "卫视"
+en = "Gansu"
+
+[[channels]]
+name = "宁夏卫视"
+tvg = "宁夏卫视"
+group = "卫视"
+en = "Ningxia"
+
+[[channels]]
+name = "青海卫视"
+tvg = "青海卫视"
+group = "卫视"
+en = "Qinghai"
+
+[[channels]]
+name = "新疆卫视"
+tvg = "新疆卫视"
+group = "卫视"
+en = "Xinjiang"
+
+[[channels]]
+name = "西藏卫视"
+tvg = "西藏卫视"
+group = "卫视"
+en = "Xizang"
+aliases = ["TIBETTV"]
+
+[[channels]]
+name = "内蒙古卫视"
+tvg = "内蒙古卫视"
+group = "卫视"
+en = "InnerMongolia"
+
+[[channels]]
+name = "厦门卫视"
+tvg = "厦门卫视"
+group = "卫视"
+en = "Xiamen"
+
+[[channels]]
+name = "大湾区卫视"
+tvg = "大湾区卫视"
+group = "卫视"
+aliases = ["GREATERBAYAREATV", "南方卫视"]
+
+[[channels]]
+name = "三沙卫视"
+tvg = "三沙卫视"
+group = "卫视"
+
+[[channels]]
+name = "兵团卫视"
+tvg = "兵团卫视"
+group = "卫视"
+
+[[channels]]
+name = "延边卫视"
+tvg = "延边卫视"
+group = "卫视"
+
+[[channels]]
+name = "安多卫视"
+tvg = "安多卫视"
+group = "卫视"
+
+[[channels]]
+name = "康巴卫视"
+tvg = "康巴卫视"
+group = "卫视"
+
+# ---------------------------------------------------------------- 4K-only channels
+[[channels]]
+name = "苏州 4K"
+tvg = "苏州4K"
+group = "4K 超高清"
+aliases = ["苏州4K超高清"]
+# The https endpoint serves an expired certificate, which Apple TV refuses.
+urls = ["http://tylive.kan0512.com/norecord/csztv4k_4k.m3u8"]
+
+# ---------------------------------------------------------------- 浙江 (official 中国蓝 CDN, open overseas)
+[[channels]]
+name = "浙江钱江都市"
+tvg = "浙江钱江都市"
+group = "浙江"
+aliases = ["浙江钱江", "钱江都市"]
+urls = ["https://ali-m-l.cztv.com/channels/lantian/channel02/1080p.m3u8"]
+
+[[channels]]
+name = "浙江经济生活"
+tvg = "浙江经济生活"
+group = "浙江"
+aliases = ["浙江经视", "浙江经济"]
+urls = ["https://ali-m-l.cztv.com/channels/lantian/channel03/1080p.m3u8"]
+
+[[channels]]
+name = "浙江教科影视"
+tvg = "浙江教科影视"
+group = "浙江"
+aliases = ["浙江教科", "浙江教育"]
+urls = ["https://ali-m-l.cztv.com/channels/lantian/channel04/1080p.m3u8"]
+
+[[channels]]
+name = "浙江民生休闲"
+tvg = "浙江民生休闲"
+group = "浙江"
+aliases = ["浙江民生", "浙江休闲台"]
+urls = ["https://ali-m-l.cztv.com/channels/lantian/channel06/1080p.m3u8"]
+
+[[channels]]
+name = "浙江新闻"
+tvg = "浙江新闻"
+group = "浙江"
+aliases = ["浙江公共新闻"]
+urls = ["https://ali-m-l.cztv.com/channels/lantian/channel07/1080p.m3u8"]
+
+[[channels]]
+name = "浙江少儿"
+tvg = "浙江少儿"
+group = "浙江"
+urls = ["https://ali-m-l.cztv.com/channels/lantian/channel08/1080p.m3u8"]
+
+[[channels]]
+name = "浙江国际"
+tvg = "浙江国际"
+group = "浙江"
+aliases = ["ZHEJIANGINTERNATIONAL"]
+urls = ["https://ali-m-l.cztv.com/channels/lantian/channel10/1080p.m3u8"]
+
+[[channels]]
+name = "之江纪录"
+tvg = "浙江数码时代"
+group = "浙江"
+aliases = ["数码时代", "浙江数码时代"]
+urls = ["https://ali-m-l.cztv.com/channels/lantian/channel12/1080p.m3u8"]
+
+# ---------------------------------------------------------------- CGTN (official, open worldwide)
+[[channels]]
+name = "CGTN"
+tvg = "CGTN"
+group = "CGTN"
+aliases = ["CGTN英语", "CGTNENGLISH"]
+urls = ["https://english-livetx.cgtn.com/hls/yypdyyctzb_hd.m3u8"]
+
+[[channels]]
+name = "CGTN 纪录"
+tvg = "CGTN纪录"
+group = "CGTN"
+aliases = ["CGTN记录", "CGTNDOCUMENTARY", "CGTNDOC"]
