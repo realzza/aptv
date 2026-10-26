@@ -248,6 +248,8 @@ class ProbeTest(unittest.TestCase):
         self.assertEqual(build.probe(f"{self.base}/master.m3u8", timeout=10, pin_height=1000).pinned, "")
         self.assertEqual(build.probe(f"{self.base}/tokened.m3u8", timeout=10, pin_height=300).pinned, "")
         self.assertEqual(build.probe(f"{self.base}/live.m3u8", timeout=10, pin_height=300).pinned, "")
+        session = f"{self.base}/sess/123e4567-e89b-12d3-a456-426614174000/live.m3u8"
+        self.assertEqual(build._stable_variant(f"{self.base}/master.m3u8", session, timeout=5), "")
 
     def test_rejects_vod_missing_and_non_hls(self):
         self.assertIn("VOD", build.probe(f"{self.base}/vod.m3u8", timeout=5).error)
