@@ -12,18 +12,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import build  # noqa: E402
 
-SETTINGS = {"uhd_group": "4K 超高清", "uhd_height": 2000, "group_order": ["4K 超高清", "央视", "卫视"]}
+FLOORS = {2160: 3.0, 1080: 0.75, 720: 0.35}
+SETTINGS = {"uhd_group": "4K 超高清", "uhd_height": 2000, "group_order": ["4K 超高清", "央视", "卫视"],
+            "quality_floors": {str(k): v for k, v in FLOORS.items()}}
 
 
-def source(url="http://x/a.m3u8", *, height=1080, official=False, headroom=5.0, startup=1.0,
-           stale=False, apple=True, last_ok="2026-10-25T00:00:00+00:00"):
-    return build.Source(url=url, official=official, width=height * 16 // 9, height=height, codec="h264",
-                        bitrate=3.0, headroom=headroom, startup=startup, segment=10, last_ok=last_ok,
-                        stale=stale, apple=apple)
+def source(url="http://x/a.m3u8", *, height=1080, codec="h264", bitrate=None, official=False, headroom=5.0,
+           startup=1.0, stale=False, apple=True, pinned="", last_ok="2026-10-25T00:00:00+00:00"):
+    if bitrate is None:  # a healthy stream for its resolution
+        bitrate = {2160: 12.0, 1080: 3.0, 720: 1.5}.get(height, 1.0)
+    return build.Source(url=url, official=official, width=height * 16 // 9, height=height, codec=codec,
+                        bitrate=bitrate, headroom=headroom, startup=startup, segment=10, last_ok=last_ok,
+                        stale=stale, apple=apple, pinned=pinned)
 
 
 def rank(sources):
-    return [s.url for s in build.rank(sources, min_headroom=1.3, good_headroom=2.0)]
+    return [s.url for s in build.rank(sources, min_headroom=1.3, good_headroom=2.0, floors=FLOORS)]
 
 
 class NormTest(unittest.TestCase):
@@ -61,6 +65,11 @@ class ConfigTest(unittest.TestCase):
 
 
 class ParseTest(unittest.TestCase):
+    def test_title_after_commas_inside_attributes(self):
+        text = ('#EXTINF:-1 http-user-agent="Mozilla/5.0 (Mac, like Gecko)" group-title="A,B",Love Nature\n'
+                'http://a/1.m3u8\n')
+        self.assertEqual(build.parse_m3u(text)[0].name, "Love Nature")
+
     def test_parse_m3u(self):
         text = ('#EXTM3U x-tvg-url="e.xml"\n'
                 '#EXTINF:-1 tvg-id="CCTV1" tvg-logo="https://l/1.png" group-title="央视",CCTV-1 综合\n'
@@ -102,6 +111,21 @@ class RankTest(unittest.TestCase):
             rank([stale, hevc_ts_uhd, choppy_uhd, marginal_uhd, relay_1080, official_1080, uhd]),
             ["uhd", "official1080", "relay1080", "marginal", "choppy", "hevc-ts", "stale"])
 
+    def test_starved_4k_ranks_below_healthy_1080p(self):
+        # Same 1080p class once demoted, so resolution no longer wins; the official HD stream does.
+        fake_4k = source("fake4k", height=2160, codec="hevc", bitrate=1.5, startup=0.5)
+        self.assertEqual(rank([fake_4k, source("hd", official=True)]), ["hd", "fake4k"])
+
+    def test_quality_classes(self):
+        q = lambda **kw: build.quality(source(**kw), FLOORS)
+        self.assertEqual(q(height=2160, codec="hevc", bitrate=10.4), 2160)
+        self.assertEqual(q(height=2160, codec="h264", bitrate=7.4), 2160)
+        self.assertEqual(q(height=2160, codec="hevc", bitrate=1.5), 1080)   # 湖南卫视 "4K"
+        self.assertEqual(q(height=2160, codec="h264", bitrate=5.0), 1080)
+        self.assertEqual(q(height=1080, codec="h264", bitrate=3.3), 1080)
+        self.assertEqual(q(height=1080, codec="h264", bitrate=0.69), 576)   # 浙江卫视 official CDN
+        self.assertEqual(q(height=1036, codec="h264", bitrate=3.0), 1080)   # slightly cropped 1080p
+
     def test_faster_start_breaks_ties(self):
         self.assertEqual(rank([source("slow", startup=4), source("fast", startup=0.7)])[0], "fast")
 
@@ -131,24 +155,53 @@ class PlaylistTest(unittest.TestCase):
             (hunan, "logo.png", [source("hunan-4k", height=2160), source("hunan-hd")]),
         ]
         rows = build.playlist_rows(results, SETTINGS, lambda s: s[:1])
-        self.assertEqual([(r[2], r[3], r[4].url) for r in rows], [
+        self.assertEqual([(r[2], r[3], r[4]) for r in rows], [
             ("4K 超高清", "湖南卫视 4K", "hunan-4k"),
             ("央视", "CCTV-1 综合", "cctv1-a"),
             ("卫视", "湖南卫视", "hunan-4k"),
         ])
         backup = build.playlist_rows(results, SETTINGS, lambda s: s[1:2])
-        self.assertEqual([r[4].url for r in backup], ["cctv1-b", "hunan-hd"])
+        self.assertEqual([r[4] for r in backup], ["cctv1-b", "hunan-hd"])
 
     def test_4k_channel_prefers_4k_even_when_it_ranks_lower(self):
         suzhou = build.Channel(name="苏州 4K", tvg="苏州4K", group="4K 超高清")
         results = [(suzhou, "", [source("hd"), source("uhd", height=2160, headroom=0.9)])]
         rows = build.playlist_rows(results, SETTINGS, lambda s: s[:2])
-        self.assertEqual([(r[2], r[3], r[4].url) for r in rows],
+        self.assertEqual([(r[2], r[3], r[4]) for r in rows],
                          [("4K 超高清", "苏州 4K", "uhd"), ("4K 超高清", "苏州 4K", "hd")])
+
+    def test_4k_lines_lock_to_pinned_variant_with_master_as_fallback(self):
+        nature = build.Channel(name="Love Nature 4K", tvg="LN", group="4K 超高清")
+        bbg = build.Channel(name="彭博", tvg="B", group="卫视")
+        results = [
+            (nature, "", [source("master", height=2160, codec="hevc", pinned="master-2160p")]),
+            (bbg, "", [source("bbg-master", height=2160, codec="hevc", pinned="bbg-2160p")]),
+        ]
+        primary = build.playlist_rows(results, SETTINGS, lambda s: s[:1])
+        backup = build.playlist_rows(results, SETTINGS, lambda s: s[1:2])
+        self.assertEqual([(r[2], r[4]) for r in primary],
+                         [("4K 超高清", "master-2160p"), ("4K 超高清", "bbg-2160p"), ("卫视", "bbg-master")])
+        self.assertEqual([r[4] for r in backup], ["master", "bbg-master"])
+
+    def test_4k_named_channel_without_real_4k_is_left_out(self):
+        cctv4k = build.Channel(name="CCTV-4K 超高清", tvg="CCTV4K", group="央视", require_4k=True)
+        suzhou = build.Channel(name="苏州 4K", tvg="苏州4K", group="4K 超高清")
+        hd_only = [source("relay-720p", height=720, bitrate=0.5)]
+        self.assertEqual(build.playlist_rows([(cctv4k, "", hd_only), (suzhou, "", hd_only)], SETTINGS,
+                                             lambda s: s[:1]), [])
+        real = [source("real-4k", height=2160, bitrate=20.0), source("hd")]
+        rows = build.playlist_rows([(cctv4k, "", real)], SETTINGS, lambda s: s[:2])
+        self.assertEqual([(r[2], r[4]) for r in rows], [("4K 超高清", "real-4k"), ("4K 超高清", "hd")])
+
+    def test_starved_4k_stays_out_of_the_4k_group(self):
+        hunan = build.Channel(name="湖南卫视", tvg="湖南卫视", group="卫视")
+        rows = build.playlist_rows([(hunan, "", [source("hd"), source("fake4k", height=2160, codec="hevc",
+                                                                        bitrate=1.5)])], SETTINGS, lambda s: s[:1])
+        self.assertEqual([(r[2], r[4]) for r in rows], [("卫视", "hd")])
 
     def test_render_m3u(self):
         ch = build.Channel(name="浙江卫视", tvg="浙江卫视", group="卫视")
-        text = build.render_m3u("https://epg/e.xml", [(ch, "https://l/z.png", "卫视", "浙江卫视", source("http://z"))])
+        text = build.render_m3u("https://epg/e.xml", [(ch, "https://l/z.png", "卫视", "浙江卫视", "http://z")])
         self.assertEqual(text, '#EXTM3U x-tvg-url="https://epg/e.xml"\n'
                                '#EXTINF:-1 tvg-id="浙江卫视" tvg-name="浙江卫视" tvg-logo="https://l/z.png" '
                                'group-title="卫视",浙江卫视\nhttp://z\n')
@@ -169,6 +222,7 @@ class ProbeTest(unittest.TestCase):
         (root / "live.m3u8").write_text(live)
         (root / "master.m3u8").write_text("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=100000\nmissing.m3u8\n"
                                           "#EXT-X-STREAM-INF:BANDWIDTH=900000\nlive.m3u8\n")
+        (root / "tokened.m3u8").write_text("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900000\nlive.m3u8?token=abc\n")
         (root / "notes.txt").write_text("hello")
         handler = functools.partial(QuietHandler, directory=str(root))
         cls.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -188,6 +242,13 @@ class ProbeTest(unittest.TestCase):
         self.assertEqual(p.segment, 2)
         self.assertGreater(p.headroom, 1)
 
+    def test_pins_stable_top_variant_only(self):
+        self.assertEqual(build.probe(f"{self.base}/master.m3u8", timeout=10, pin_height=300).pinned,
+                         f"{self.base}/live.m3u8")
+        self.assertEqual(build.probe(f"{self.base}/master.m3u8", timeout=10, pin_height=1000).pinned, "")
+        self.assertEqual(build.probe(f"{self.base}/tokened.m3u8", timeout=10, pin_height=300).pinned, "")
+        self.assertEqual(build.probe(f"{self.base}/live.m3u8", timeout=10, pin_height=300).pinned, "")
+
     def test_rejects_vod_missing_and_non_hls(self):
         self.assertIn("VOD", build.probe(f"{self.base}/vod.m3u8", timeout=5).error)
         self.assertIn("404", build.probe(f"{self.base}/nope.m3u8", timeout=5).error)
@@ -201,6 +262,7 @@ class MainTest(unittest.TestCase):
             cfg.write_text(
                 '[settings]\nepg = ""\nlogo_base = "http://127.0.0.1:9/"\nprobe_timeout = 2\n'
                 'max_candidates = 5\nmin_headroom = 1.3\ngood_headroom = 2.0\nuhd_height = 2000\nstale_days = 3\n'
+                'quality_floors = { 2160 = 3.0, 1080 = 0.75, 720 = 0.35 }\n'
                 'min_fresh_share = 0.5\ngroup_order = ["g"]\nuhd_group = "4K"\nofficial_hosts = []\n'
                 '[[channels]]\nname = "A"\ntvg = "A"\ngroup = "g"\nurls = ["http://127.0.0.1:9/a.m3u8"]\n',
                 encoding="utf-8")

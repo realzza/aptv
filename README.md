@@ -24,16 +24,17 @@ re-tested twice a day from a US machine, and only working streams are kept.
 
 | Channel | Works? | Best source | Notes |
 |---|---|---|---|
-| **湖南卫视** | ✅ **4K** HEVC | official (芒果TV CDN) | The best 4K channel abroad, but it needs APTV's non-system player (see below). The main entry uses a 1080p relay |
-| **浙江卫视** + 8 Zhejiang channels | ✅ 1080p | official (中国蓝 CDN) | All of cztv's channels are open overseas |
+| **湖南卫视** | ✅ 1080p | relay | Its official "4K" feed runs at only ~1.5 Mbps, less picture than the 1080p relay, so it's left out of the 4K group |
+| **浙江卫视** + 8 Zhejiang channels | ✅ 1080p | official (中国蓝 CDN) | All of cztv's channels are open overseas. Some cztv 1080p feeds run at only ~0.7 Mbps; the build prefers whichever source has the bitrate |
 | **东方卫视** | ✅ 1080p | official (BesTV) | The "东方卫视4K" feed arrives as 1080p; thin headroom (~1.4×), so it may buffer |
-| **河北卫视** | ✅ **4K** H.264 | official | About 7 Mbps with thin headroom (~2×). It's in the 4K group; the main entry uses a 1080p relay |
-| **苏州 4K** | ✅ **4K** | official | Plain http only (the https certificate has expired) |
+| **河北卫视** | ✅ **4K** H.264 | official | About 7.5 Mbps, which is thin for 4K H.264, with ~2× headroom |
+| **苏州 4K** | ✅ **4K** H.264 | official | About 8 Mbps. Plain http only (the https certificate has expired) |
+| **Love Nature 4K**, **Clarity 4K**, **Bloomberg TV+ UHD** | ✅ **4K** HEVC | free ad-supported (FAST) feeds | 8.5–10.5 Mbps, the best-looking 4K here. They need APTV's non-system player |
 | **江苏卫视** | ✅ 1080p | third-party relay | No official stream plays outside China |
 | **CCTV-1 … CCTV-17, 5+** | ✅ 720p–1080p | third-party relays | Official CCTV is blocked abroad (see above) |
 | Most other 卫视 (北京, 广东, 深圳, 山东, 安徽, …) | ✅ 1080p | relays | |
 | CGTN, CGTN 纪录 | ✅ | official / relay | |
-| CCTV-4K, CCTV-8K | ❌ / 1080p | — | True 4K/8K CCTV exists only inside China (operator IPTV, 央视频) |
+| CCTV-4K, CCTV-8K | ❌ | — | Abroad only as 720p/1080p relays, so they're left out. True 4K/8K CCTV exists only inside China (operator IPTV, 央视频) |
 
 The live table, regenerated on every run, is in [`dist/README.md`](dist/README.md).
 
@@ -46,14 +47,30 @@ sources automatically. If you would rather use only broadcaster-run streams, sub
 
 ### 4K, honestly
 
-- Outside China you can get real 4K on **湖南卫视**, **河北卫视** and **苏州 4K**. They are listed
-  together in the playlist's `4K 超高清` group.
-- **湖南卫视 4K is HEVC inside MPEG-TS, which Apple's own player (AVPlayer) won't decode:** you get
-  sound but no picture. In APTV, set 设置 → 首选播放器 to the non-system player (or 自动) to watch
-  it. 河北卫视 4K and 苏州 4K are H.264 and play in either player.
-- **CCTV-4K/8K, 北京卫视4K, 广东/深圳 4K and 东方卫视4K at full resolution** are only delivered
-  inside China, through operator IPTV multicast or 央视频 with a mainland IP.
-- You need an Apple TV 4K. The Apple TV HD tops out at 1080p and has no hardware HEVC decoding.
+"4K" in a channel name says nothing about the picture: what matters is the bitrate. For
+reference, Netflix 4K is about 15 Mbps HEVC. The build measures every stream and enforces this:
+
+- **Only real 4K enters the `4K 超高清` group.** A source has to deliver 2160p at ≥ 3 Mbps
+  HEVC-equivalent (H.264 counts half). A starved "4K" is ranked as the HD stream it effectively is.
+  A channel with 4K in its name (苏州 4K, CCTV-4K) is left out entirely while no real-4K source
+  plays, rather than showing HD under a 4K label.
+- **The player can't silently drop to 720p.** For adaptive streams (Love Nature 4K, Clarity 4K),
+  the 4K entry points straight at the 2160p variant, so the player can't step down. The adaptive
+  master is the backup line in `aptv-backup.m3u`, so a 聚合配置 falls back to it instead of
+  failing. Bloomberg's variant URLs are per-session, so it stays adaptive; it lists 4K first.
+- **What's left:** 河北卫视 4K and 苏州 4K (official, H.264 at ~7.5–8 Mbps, so watchable but soft
+  in motion) and the three FAST channels (HEVC at 8.5–10.5 Mbps, which look properly 4K).
+
+To actually see 4K on the TV:
+
+1. **Apple TV 4K**, set to 设置 → 视频与音频 → 格式 **4K** (SDR or HDR). If it's set to 1080p,
+   everything is downscaled. Also turn on 匹配内容 (match dynamic range and frame rate).
+2. **APTV 首选播放器 → the non-system player**, with 硬件解码 on. The FAST channels are HEVC inside
+   MPEG-TS, which Apple's own player won't decode (you'd get sound only).
+3. **Ethernet, or strong Wi-Fi.** Each 4K stream needs a steady 10–15 Mbps.
+
+Not available abroad at all: CCTV-4K/8K, and full-resolution 北京, 广东, 深圳 and 东方卫视 4K.
+Those are delivered only inside China, through operator IPTV or 央视频 with a mainland IP.
 
 ### Latency, honestly
 
@@ -81,8 +98,9 @@ faster rank higher when everything else is equal.
    create a **聚合配置** with `aptv` first and `aptv-backup` second. APTV merges channels with
    the same name and switches to the backup if a stream doesn't start within the timeout
    (default 5 s, under 设置 → 高级设置 → 播放超时时间).
-4. For **湖南卫视 4K**, set 设置 → 首选播放器 to the non-system player (or 自动). The system
-   player shows no picture for HEVC-in-TS streams.
+4. For the **4K group**, set 设置 → 首选播放器 to the non-system player, with 硬件解码 on. The
+   system player shows no picture for the HEVC-in-TS streams there. See "4K, honestly" above for the
+   Apple TV settings.
 
 ## All the options I looked at
 
@@ -112,7 +130,8 @@ consider them further.
    placeholders without video, expired TLS certificates and anything that doesn't decode are
    dropped.
 4. Ranks each channel's sources: plays in Apple's AVPlayer (no HEVC-in-TS, no MP2 audio) →
-   comfortable headroom (≥ 2×, then ≥ 1.3×) → resolution → official over relay → faster start.
+   comfortable headroom (≥ 2×, then ≥ 1.3×) → real picture quality (resolution the bitrate can
+   carry) → official over relay → faster start.
    So each channel's main entry is the one most likely to just work, and 4K streams that are
    marginal or need the other player engine are still listed in the `4K 超高清` group. If a channel finds no working source in a run, its sources from the last 3 days
    are kept.

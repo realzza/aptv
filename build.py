@@ -57,6 +57,7 @@ class Channel:
     urls: list[str] = field(default_factory=list)
     aliases: list[str] = field(default_factory=list)
     en: str = ""
+    require_4k: bool = False  # a 4K channel: only listed while a real-4K source plays
 
     def keys(self) -> set[str]:
         names = [self.name, self.tvg, *self.aliases]
@@ -89,12 +90,23 @@ class Entry:
 _ATTR = re.compile(r'([\w-]+)="([^"]*)"')
 
 
+def _split_extinf(line: str) -> tuple[str, str]:
+    """Split '#EXTINF:-1 attrs,Title' at the first comma outside quotes (attribute values may contain commas)."""
+    quoted = False
+    for i, c in enumerate(line):
+        if c == '"':
+            quoted = not quoted
+        elif c == "," and not quoted:
+            return line[:i], line[i + 1:]
+    return line, ""
+
+
 def parse_m3u(text: str) -> list[Entry]:
     entries, pending = [], None
     for raw in text.splitlines():
         line = raw.strip()
         if line.startswith("#EXTINF"):
-            head, _, title = line.partition(",")
+            head, title = _split_extinf(line)
             attrs = dict(_ATTR.findall(head))
             pending = Entry(title.strip() or attrs.get("tvg-name", ""), "", attrs.get("tvg-logo", ""))
         elif line and not line.startswith("#") and pending:
@@ -146,6 +158,7 @@ class Probe:
     throughput: float = 0.0  # Mbps, measured download speed
     startup: float = 0.0     # seconds from first request until the first segment arrived
     segment: float = 0.0     # HLS target duration; players sit roughly 3x this behind live
+    pinned: str = ""         # top-variant media playlist of a master, when its URL is stable
 
     @property
     def headroom(self) -> float:
@@ -213,8 +226,26 @@ def apple_compatible(codec: str, audio: str, container: str) -> bool:
     return audio in APPLE_AUDIO
 
 
-def probe(url: str, timeout: float) -> Probe:
-    """Join the stream like a player: playlist -> best variant -> newest segments, then inspect them."""
+# Query parameters that usually mean a URL expires or is tied to one session.
+_EPHEMERAL = re.compile(r"(?:^|&)(?:token|expires?|exp|sig|signature|hdnts|hdnea|auth|session|sid|st|e)=", re.I)
+
+
+def _stable_variant(url: str, variant: str, timeout: float) -> str:
+    """The variant URL if a fresh master fetch hands out the same one and it carries no session token."""
+    try:
+        final, body = fetch(url, timeout, MAX_PLAYLIST_BYTES)
+        again = _best_variant(final, body.decode("utf-8", "replace"))
+    except Exception:
+        return ""
+    return variant if again == variant and not _EPHEMERAL.search(urllib.parse.urlsplit(variant).query) else ""
+
+
+def probe(url: str, timeout: float, pin_height: int = 0) -> Probe:
+    """Join the stream like a player: playlist -> best variant -> newest segments, then inspect them.
+
+    For a master playlist whose top variant is at least `pin_height` tall, also record that
+    variant's URL in `pinned` if it is stable, so a playlist can lock players onto it.
+    """
     p = Probe(url)
     t0 = time.monotonic()
     try:
@@ -222,8 +253,10 @@ def probe(url: str, timeout: float) -> Probe:
         text = body.decode("utf-8", "replace")
         if "#EXTM3U" not in text[:1024]:
             raise ProbeError("not an HLS playlist")
+        variant = ""
         if "#EXT-X-STREAM-INF" in text:
-            final, body = fetch(_best_variant(final, text), timeout, MAX_PLAYLIST_BYTES)
+            variant = _best_variant(final, text)
+            final, body = fetch(variant, timeout, MAX_PLAYLIST_BYTES)
             text = body.decode("utf-8", "replace")
         if "#EXT-X-ENDLIST" in text:
             raise ProbeError("VOD playlist, not a live stream")
@@ -258,6 +291,8 @@ def probe(url: str, timeout: float) -> Probe:
             raise ProbeError("no decodable video")
         for key, value in info.items():
             setattr(p, key, value)
+        if variant and pin_height and p.height >= pin_height:
+            p.pinned = _stable_variant(url, variant, timeout)
         p.ok = True
     except ProbeError as e:
         p.error = str(e)
@@ -295,19 +330,34 @@ class Source:
     audio: str = ""
     container: str = ""
     apple: bool = True       # plays in AVPlayer, APTV's system player
+    pinned: str = ""         # stable 2160p variant URL, when the source is an adaptive master
 
 
-def rank(sources: list[Source], min_headroom: float, good_headroom: float) -> list[Source]:
-    """Fresh, Apple-playable and reliably fast first; then resolution, broadcaster-run over relays, zap speed.
+def quality(s: Source, floors: dict[int, float]) -> int:
+    """Effective resolution class (2160/1080/720/576): nominal height, demoted when the bitrate can't carry it.
 
-    Reliability outranks resolution so a channel's main entry just works; 4K sources that are
-    marginal or need APTV's other player engine still get listed in the 4K group.
+    `floors` maps a class to the minimum HEVC-equivalent Mbps it needs; H.264 counts half.
+    A "4K" stream at 1.5 Mbps HEVC carries less picture than an ordinary 1080p stream.
+    """
+    eq = s.bitrate * (1.0 if s.codec == "hevc" else 0.5)
+    for height in sorted(floors, reverse=True):
+        if s.height >= height * 0.9 and eq >= floors[height]:
+            return height
+    return min(s.height, 576)
+
+
+def rank(sources: list[Source], min_headroom: float, good_headroom: float,
+         floors: dict[int, float]) -> list[Source]:
+    """Fresh, Apple-playable and reliably fast first; then real picture quality, broadcaster-run, zap speed.
+
+    Reliability outranks quality so a channel's main entry just works; 4K sources that are
+    marginal or need APTV's other player engine are still listed in the 4K group.
     """
     return sorted(sources, key=lambda s: (
         not s.stale,
         s.apple,
         (s.headroom >= good_headroom) + (s.headroom >= min_headroom),
-        min(s.height, 2160),
+        quality(s, floors),
         s.official,
         -s.startup,
     ), reverse=True)
@@ -333,32 +383,62 @@ def extinf(ch: Channel, logo: str, group: str, title: str) -> str:
     return f"#EXTINF:-1 {' '.join(attrs)},{title}"
 
 
-def render_m3u(epg: str, rows: list[tuple[Channel, str, str, str, Source]]) -> str:
+def render_m3u(epg: str, rows: list[tuple[Channel, str, str, str, str]]) -> str:
     lines = [f'#EXTM3U x-tvg-url="{epg}"']
-    for ch, logo, group, title, src in rows:
-        lines += [extinf(ch, logo, group, title), src.url]
+    for ch, logo, group, title, url in rows:
+        lines += [extinf(ch, logo, group, title), url]
     return "\n".join(lines) + "\n"
 
 
+def is_4k_channel(ch: Channel, uhd_group: str) -> bool:
+    return ch.require_4k or ch.group == uhd_group
+
+
+def floors_of(settings: dict) -> dict[int, float]:
+    return {int(k): v for k, v in settings["quality_floors"].items()}
+
+
+def _lines(sources: list[Source], pin: bool) -> list[str]:
+    """Playable URLs in order. With `pin`, a source's locked 2160p variant comes first and its
+    adaptive master right after, as the fallback line."""
+    urls: list[str] = []
+    for s in sources:
+        for u in (s.pinned, s.url) if pin and s.pinned else (s.url,):
+            if u not in urls:
+                urls.append(u)
+    return urls
+
+
 def playlist_rows(results: list[tuple[Channel, str, list[Source]]], settings: dict,
-                  pick) -> list[tuple[Channel, str, str, str, Source]]:
-    """Rows for one playlist; `pick(sources)` chooses which of a channel's ranked sources to emit."""
-    uhd_group, uhd_height = settings["uhd_group"], settings["uhd_height"]
+                  pick) -> list[tuple[Channel, str, str, str, str]]:
+    """Rows for one playlist; `pick(urls)` chooses which of a channel's ranked lines to emit.
+
+    Sources whose real quality is 4K are also listed in the 4K group, locked to their 2160p
+    variant when that is possible. Main entries keep adaptive masters for reliability.
+    """
+    uhd_group, floors = settings["uhd_group"], floors_of(settings)
     rows = []
     for ch, logo, sources in results:
-        uhd = [s for s in sources if s.height >= uhd_height]
-        if ch.group == uhd_group:  # a 4K channel: 4K sources first even if they rank lower
-            rows += [(ch, logo, ch.group, ch.name, s) for s in pick(uhd + [s for s in sources if s not in uhd])]
+        uhd = [s for s in sources if quality(s, floors) >= 2160]
+        if is_4k_channel(ch, uhd_group):  # never list a 4K channel that would play HD
+            if not uhd:
+                continue
+            group = uhd_group  # real-4K lines first; HD only as a fallback line behind them
+            rest = [s for s in sources if s not in uhd]
+            rows += [(ch, logo, group, ch.name, u) for u in pick(_lines(uhd, pin=True) + _lines(rest, pin=False))]
             continue
         if uhd:
             title = ch.name if "4K" in ch.name.upper() else f"{ch.name} 4K"
-            rows += [(ch, logo, uhd_group, title, s) for s in pick(uhd)]
-        rows += [(ch, logo, ch.group, ch.name, s) for s in pick(sources)]
+            rows += [(ch, logo, uhd_group, title, u) for u in pick(_lines(uhd, pin=True))]
+        rows += [(ch, logo, ch.group, ch.name, u) for u in pick(_lines(sources, pin=False))]
     order = {g: i for i, g in enumerate(settings["group_order"])}
     return sorted(rows, key=lambda r: order.get(r[2], len(order)))  # stable: keeps catalog order
 
 
-def render_report(results, generated: str, counts: dict) -> str:
+QUALITY_LABEL = {2160: "4K", 1080: "1080p", 720: "720p"}
+
+
+def render_report(results, generated: str, counts: dict, floors: dict[int, float], uhd_group: str) -> str:
     out = [
         "# Channel status",
         "",
@@ -367,23 +447,35 @@ def render_report(results, generated: str, counts: dict) -> str:
         "",
         "Latency ≈ 3 × segment length behind live. Headroom = download speed ÷ stream bitrate "
         "(≥ 1.3 plays, ≥ 2 comfortably). *Official* = served by the broadcaster's own CDN. "
-        "*Apple* = plays in APTV's 系统播放器 (AVPlayer); ✗ needs APTV's other player engine.",
+        "*Apple* = plays in APTV's 系统播放器 (AVPlayer); ✗ needs APTV's other player engine. "
+        "*Quality* = resolution the bitrate can actually carry (H.264 needs about twice HEVC's bitrate); "
+        "📌 = locked to the 2160p variant so the player can't drop to a lower one.",
         "",
-        "| Channel | Group | Best source | Codec | Apple | Headroom | Segment | Start | Source | Backups |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| Channel | Group | Best source | Codec | Mbps | Quality | Apple | Headroom | Segment | Start | Source | Backups |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for ch, _, sources in results:
         if not sources:
-            out.append(f"| {ch.name} | {ch.group} | ❌ nothing plays | | | | | | | |")
+            out.append(f"| {ch.name} | {ch.group} | ❌ nothing plays | | | | | | | | | |")
             continue
         s = sources[0]
+        if is_4k_channel(ch, uhd_group) and not any(quality(u, floors) >= 2160 for u in sources):
+            out.append(f"| {ch.name} | {ch.group} | ⚠️ no real 4K source (best: {s.width}×{s.height}, "
+                       f"{s.bitrate:.1f} Mbps), left out | | | | | | | | | |")
+            continue
         kind = "official" if s.official else "relay"
         if s.stale:
             kind += " (stale)"
         host = urllib.parse.urlsplit(s.url).hostname
         codec = f"{s.codec}/{s.audio}" if s.audio else s.codec
-        out.append(f"| {ch.name} | {ch.group} | {s.width}×{s.height} | {codec} | {'✓' if s.apple else '✗'} "
-                   f"| {s.headroom:.1f}× "
+        q = QUALITY_LABEL.get(quality(s, floors), "SD")
+        best4k = next((u for u in sources if quality(u, floors) >= 2160), None)
+        if best4k and best4k is not s:  # the main entry is HD, but the 4K group has this one
+            q += f" (4K {best4k.bitrate:.1f} Mbps{' 📌' if best4k.pinned else ''})"
+        elif best4k and s.pinned:
+            q += " 📌"
+        out.append(f"| {ch.name} | {ch.group} | {s.width}×{s.height} | {codec} | {s.bitrate:.1f} | {q} "
+                   f"| {'✓' if s.apple else '✗'} | {s.headroom:.1f}× "
                    f"| {s.segment:.0f}s | {s.startup:.1f}s | {kind} `{host}` | {len(sources) - 1} |")
     return "\n".join(out) + "\n"
 
@@ -445,7 +537,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  probing {len(urls)} URLs with {args.workers} workers...", file=sys.stderr)
     t0 = time.monotonic()
     with cf.ThreadPoolExecutor(args.workers) as ex:
-        probes = dict(zip(urls, ex.map(lambda u: probe(u, timeout), urls)))
+        probes = dict(zip(urls, ex.map(lambda u: probe(u, timeout, settings["uhd_height"]), urls)))
     ok_count = sum(p.ok for p in probes.values())
     print(f"  {ok_count}/{len(urls)} played ({time.monotonic() - t0:.0f}s)", file=sys.stderr)
 
@@ -462,17 +554,19 @@ def main(argv: list[str] | None = None) -> int:
             Source(url=p.url, official=is_official(p.url, settings["official_hosts"]), width=p.width,
                    height=p.height, codec=p.codec, bitrate=round(p.bitrate, 2), headroom=round(p.headroom, 1),
                    startup=round(p.startup, 2), segment=p.segment, last_ok=now.isoformat(), audio=p.audio,
-                   container=p.container, apple=apple_compatible(p.codec, p.audio, p.container))
+                   container=p.container, apple=apple_compatible(p.codec, p.audio, p.container),
+                   pinned=p.pinned)
             for p in (probes[u] for u in candidates[ch.name]) if p.ok
         ]
         if not sources:
             sources = carry_over(previous.get(ch.name, []), now, settings["stale_days"])
         logo = logos.get(ch.name) or upstream_logo.get(ch.name, "")
-        results.append((ch, logo, rank(sources, settings["min_headroom"], settings["good_headroom"])))
+        results.append((ch, logo, rank(sources, settings["min_headroom"], settings["good_headroom"],
+                                       floors_of(settings))))
 
     generated = now.strftime("%Y-%m-%d %H:%M UTC")
     counts = {"probed": len(urls), "ok": ok_count}
-    report = render_report(results, generated, counts)
+    report = render_report(results, generated, counts, floors_of(settings), settings["uhd_group"])
     if args.only:
         print(report)
         return 0
