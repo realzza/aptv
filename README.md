@@ -112,6 +112,8 @@ consider them further.
 4. Ranks each channel's sources: smooth (headroom ≥ 1.3×) → resolution → official over relay →
    faster start. If a channel finds no working source in a run, its sources from the last 3 days
    are kept.
+   If more than half the channels fail at once (usually the build machine's network), the run
+   stops and the previous playlists stay as they are.
 5. Writes `dist/`. [`refresh.yml`](.github/workflows/refresh.yml) runs this on a US GitHub
    runner at about 7am and 7pm Pacific and commits any changes.
 

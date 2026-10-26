@@ -172,6 +172,22 @@ class ProbeTest(unittest.TestCase):
         self.assertIn("not an HLS", build.probe(f"{self.base}/notes.txt", timeout=5).error)
 
 
+class MainTest(unittest.TestCase):
+    def test_does_not_overwrite_dist_when_almost_everything_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg, out = Path(tmp) / "c.toml", Path(tmp) / "dist"
+            cfg.write_text(
+                '[settings]\nepg = ""\nlogo_base = "http://127.0.0.1:9/"\nprobe_timeout = 2\n'
+                'max_candidates = 5\nmin_headroom = 1.3\nuhd_height = 2000\nstale_days = 3\n'
+                'min_fresh_share = 0.5\ngroup_order = ["g"]\nuhd_group = "4K"\nofficial_hosts = []\n'
+                '[[channels]]\nname = "A"\ntvg = "A"\ngroup = "g"\nurls = ["http://127.0.0.1:9/a.m3u8"]\n',
+                encoding="utf-8")
+            self.assertEqual(build.main(["--config", str(cfg), "--out", str(out)]), 1)
+            self.assertFalse(out.exists())
+            self.assertEqual(build.main(["--config", str(cfg), "--out", str(out), "--force"]), 0)
+            self.assertEqual((out / "aptv.m3u").read_text(), '#EXTM3U x-tvg-url=""\n')
+
+
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass

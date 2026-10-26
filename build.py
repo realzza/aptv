@@ -373,6 +373,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=DIST)
     ap.add_argument("--only", help="probe only channels whose name contains this text; print, don't write")
     ap.add_argument("--workers", type=int, default=32)
+    ap.add_argument("--force", action="store_true", help="write dist/ even if most channels failed")
     args = ap.parse_args(argv)
 
     settings, upstreams, channels = load_config(args.config)
@@ -438,6 +439,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.only:
         print(report)
         return 0
+    fresh = sum(any(not s.stale for s in srcs) for _, _, srcs in results)
+    if fresh < len(results) * settings["min_fresh_share"] and not args.force:
+        # Almost always the build machine's network, not the streams: keep the last good playlists.
+        print(f"! only {fresh}/{len(results)} channels probed OK; leaving {args.out} untouched "
+              "(--force to write anyway)", file=sys.stderr)
+        return 1
 
     # 4. write playlists, report and state
     args.out.mkdir(parents=True, exist_ok=True)

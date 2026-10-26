@@ -13,6 +13,7 @@ max_candidates = 40       # per channel, pinned URLs first
 min_headroom = 1.3        # download speed / stream bitrate needed to count as smooth
 uhd_height = 2000         # sources at least this tall are also listed under the 4K group
 stale_days = 3            # keep last-known-good sources this long when a channel stops probing
+min_fresh_share = 0.5     # refuse to overwrite dist/ if fewer channels than this probe OK
 group_order = ["4K 超高清", "央视", "卫视", "浙江", "CGTN"]
 uhd_group = "4K 超高清"
 
