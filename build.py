@@ -523,10 +523,12 @@ def main(argv: list[str] | None = None) -> int:
         matched = 0
         for e in entries:
             ch = by_key.get(norm(e.name))
-            if ch and usable_url(e.url) and e.url not in candidates[ch.name]:
+            if not ch:
+                continue
+            if e.logo:  # even when the URL is one we pinned ourselves
+                upstream_logo.setdefault(ch.name, e.logo)
+            if usable_url(e.url) and e.url not in candidates[ch.name]:
                 candidates[ch.name].append(e.url)
-                if e.logo:
-                    upstream_logo.setdefault(ch.name, e.logo)
                 matched += 1
         print(f"  upstream {up['name']}: {len(entries)} entries, {matched} new candidates", file=sys.stderr)
     for name in candidates:
